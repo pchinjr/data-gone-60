@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Data Gone in 60 Seconds - Data Ingestion SAM Project with API Key Protection
+  This project receives POST requests and writes the data into an S3 bucket.
+  The API is protected with an API key.
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+
+Resources:
+  # S3 Bucket to store incoming data
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: datagonein60-rawdata
+
+  # Explicit API definition with API key requirement
+  DataIngestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        ApiKeyRequired: true
+
+  # Lambda Function to ingest data via API Gateway
+  DataIngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ingestData.handler
+      CodeUri: ./dist
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref RawDataBucket
+      Events:
+        IngestAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DataIngestApi
+            Path: /ingest
+            Method: post
+
+  # API Key Resource
+  IngestApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: IngestApiKey
+      Enabled: true
+
+  # Usage Plan for the API
+  IngestUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: DataIngestApiProdStage
+    Properties:
+      UsagePlanName: IngestUsagePlan
+      Description: "Usage plan for DataIngest API"
+      ApiStages:
+        - ApiId: !Ref DataIngestApi
+          Stage: Prod
+
+  # Associate the API Key with the Usage Plan
+  IngestUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref IngestApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref IngestUsagePlan
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for the Data Ingest Function"
+    Value: !Sub "https://${DataIngestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/ingest"
+  ApiKey:
+    Description: "API Key for accessing the Data Ingest API"
+    Value: !Ref IngestApiKey

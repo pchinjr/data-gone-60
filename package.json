@@ -1,0 +1,21 @@
+{
+  "name": "data-gone-60",
+  "version": "1.0.0",
+  "description": "Example code for Data Gone in 60 Seconds",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "sam local start-api"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.744.0",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.147",
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3"
+  }
+}
