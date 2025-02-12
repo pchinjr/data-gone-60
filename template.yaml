@@ -7,7 +7,7 @@ Description: >
 
 Globals:
   Function:
-    Runtime: nodejs18.x
+    Runtime: nodejs20.x
     Timeout: 30
 
 Resources:
@@ -24,13 +24,17 @@ Resources:
       StageName: Prod
       Auth:
         ApiKeyRequired: true
-
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          DataTraceEnabled: true
   # Lambda Function to ingest data via API Gateway
   DataIngestFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: ingestData.handler
-      CodeUri: ./dist
+      CodeUri: src/
       Environment:
         Variables:
           BUCKET_NAME: !Ref RawDataBucket
@@ -41,7 +45,14 @@ Resources:
             RestApiId: !Ref DataIngestApi
             Path: /ingest
             Method: post
-
+      Policies:
+        - S3WritePolicy:
+            BucketName: datagonein60-rawdata
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: 
+          - src/ingestData.ts        
   # API Key Resource
   IngestApiKey:
     Type: AWS::ApiGateway::ApiKey

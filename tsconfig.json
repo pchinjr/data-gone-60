@@ -9,7 +9,7 @@
       "rootDir": "src",
       "resolveJsonModule": true,
       "skipLibCheck": true,
-      "types": ["node", "aws-lambda"]
+      "types": ["node", "aws-lambda", "jest"]
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules"]

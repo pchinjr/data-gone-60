@@ -39,3 +39,12 @@ MOCKS
 - the first SAM template.yaml has just one lambda, api gateway, and api key usage plans, and an s3 bucket
 - debug stage name conflicts again, the api key usage plan depends on the stage existing first. 
 - When SAM templates are in `ROLLBACK_COMPLETE` state has to be deleted with `sam delete --stack-name data-gone-60 --region us-east-1`
+- git check point - feat: initial deploy successful
+- adding unit test with jest, debugging type errors, debugging s3 client mock, simplified mocks
+- set up lambda for "dependency injection" to allow test mocking of s3 client
+- debugging service linked role for logging on the apigateway, cant be set from SAM template. 
+- createdj trust-policy.json and created role then attached a policy to that role
+- `aws iam create-role --role-name APIGatewayCWLogsRole --assume-role-policy-document file://trust-policy.json`
+- `aws iam attach-role-policy --role-name APIGatewayCWLogsRole --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs`
+- look up the api key by ID from apigw console
+- 
