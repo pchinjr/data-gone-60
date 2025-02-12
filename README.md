@@ -47,4 +47,7 @@ MOCKS
 - `aws iam create-role --role-name APIGatewayCWLogsRole --assume-role-policy-document file://trust-policy.json`
 - `aws iam attach-role-policy --role-name APIGatewayCWLogsRole --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs`
 - look up the api key by ID from apigw console
-- 
+- debug right combination of esbuild order of operations and file directories
+- `sam build --manifest ./package.json` - tells SAM to transpile and bundle functions
+- `sam deploy` then deploys to the cloud
+- git check point - feat: tests builds deploys works

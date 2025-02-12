@@ -51,8 +51,8 @@ Resources:
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
-        EntryPoints: 
-          - src/ingestData.ts        
+        EntryPoints:
+          - src/ingestData.ts
   # API Key Resource
   IngestApiKey:
     Type: AWS::ApiGateway::ApiKey
