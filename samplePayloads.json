@@ -1,0 +1,38 @@
+[
+    {
+        "sensorId": "S123",
+        "rawTemperature": 85,
+        "rawHumidity": 55,
+        "timestamp": "2025-02-10T12:00:00Z"
+    },
+    {
+        "sensorId": "S101",
+        "rawTemperature": 95,
+        "rawHumidity": 48,
+        "timestamp": "2025-02-10T12:00:00Z"
+    },
+    {
+        "sensorId": "S102",
+        "rawTemperature": 88,
+        "rawHumidity": 50,
+        "timestamp": "2025-02-10T12:05:00Z"
+    },
+    {
+        "sensorId": "S103",
+        "rawTemperature": 102,
+        "rawHumidity": 45,
+        "timestamp": "2025-02-10T12:10:00Z"
+    },
+    {
+        "sensorId": "S104",
+        "rawTemperature": 80,
+        "rawHumidity": 60,
+        "timestamp": "2025-02-10T12:15:00Z"
+    },
+    {
+        "sensorId": "S105",
+        "rawTemperature": 75,
+        "rawHumidity": 55,
+        "timestamp": "2025-02-10T12:20:00Z"
+    }
+]

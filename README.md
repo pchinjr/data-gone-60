@@ -43,7 +43,7 @@ MOCKS
 - adding unit test with jest, debugging type errors, debugging s3 client mock, simplified mocks
 - set up lambda for "dependency injection" to allow test mocking of s3 client
 - debugging service linked role for logging on the apigateway, cant be set from SAM template. 
-- createdj trust-policy.json and created role then attached a policy to that role
+- created trust-policy.json and created role then attached a policy to that role
 - `aws iam create-role --role-name APIGatewayCWLogsRole --assume-role-policy-document file://trust-policy.json`
 - `aws iam attach-role-policy --role-name APIGatewayCWLogsRole --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs`
 - look up the api key by ID from apigw console
@@ -55,3 +55,11 @@ MOCKS
 - Queries can be run from Lambda functions
 - refactor ingestion lambda to partion data according to date for filtering
 - git check point - feat: ingest data to date time partitions in s3
+- debugging athenaquery function with correct set of iam permissions
+- debugging athenaquery function, the output partition doesn't exist, must manually make ahead of time /transformed
+- had to look in the athena console query history to see the actual error message from athena that was a permission error for glue catalog. since athena uses glue, it also needs ability to read it
+- debugging error of missing table, sam invoke local to get detailed error response, problem in SQS_QUEUE_URL
+- using sam invoke local with hard coding the queue url makes it work, but the lambda console test does not, it still reports that the table does not exist. `sam local invoke AthenaQueryFunction --event sample-athena-query.json`
+- aws lambda invoke --function-name data-gone-60-AthenaQueryFunction-t4LVXkcRrJPZ output.json --payload '{}'
+- debugging missing table, I had a typo in the resource, and then figured out the cascade of IAM policies afterwards
+- git check point - feat: Athena works and SQS works

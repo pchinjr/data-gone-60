@@ -29,6 +29,7 @@ Resources:
           HttpMethod: "*"
           LoggingLevel: INFO
           DataTraceEnabled: true
+
   # Lambda Function to ingest data via API Gateway
   DataIngestFunction:
     Type: AWS::Serverless::Function
@@ -53,6 +54,7 @@ Resources:
       BuildProperties:
         EntryPoints:
           - src/ingestData.ts
+
   # API Key Resource
   IngestApiKey:
     Type: AWS::ApiGateway::ApiKey
@@ -78,6 +80,80 @@ Resources:
       KeyId: !Ref IngestApiKey
       KeyType: API_KEY
       UsagePlanId: !Ref IngestUsagePlan
+  
+  # Dedicated SQS Queue
+  ProcessedDataQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ProcessedDataQueue
+
+  # Lambda Function to Query Athena
+  AthenaQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: runAthenaQuery.handler
+      CodeUri: src/
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          ATHENA_DATABASE: my_athena_database
+          ATHENA_TABLE: my_raw_data_table
+          ATHENA_OUTPUT_LOCATION: s3://datagonein60-rawdata/transformed/
+          SQS_QUEUE_URL: !GetAtt ProcessedDataQueue.QueueUrl
+          QUERY_YEAR: "2025"
+          QUERY_MONTH: "02"
+          QUERY_DAY: "10"
+          QUERY_HOUR: "12"
+          QUERY_MINUTE: "05"
+          TEMP_MIN: "30"
+          TEMP_MAX: "32"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - athena:StartQueryExecution
+                - athena:GetQueryExecution
+                - athena:GetQueryResults
+                - athena:ListDataCatalogs,
+                - athena:GetDataCatalog,
+                - athena:CreateDataCatalog,
+                - athena:UpdateDataCatalog,
+                - athena:DeleteDataCatalog,
+                - athena:GetDatabase,
+                - athena:ListDatabases,
+                - athena:GetTableMetadata,
+                - athena:ListTableMetadata
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt ProcessedDataQueue.Arn
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetBucketLocation
+              Resource: "arn:aws:s3:::datagonein60-rawdata"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource: "arn:aws:s3:::datagonein60-rawdata/*"
+            - Effect: Allow
+              Action:
+                - glue:GetDatabase
+                - glue:GetTable
+                - glue:GetCatalog
+                - glue:GetPartition
+              Resource: 
+                - "arn:aws:glue:us-east-1:837132623653:database/my_athena_database"
+                - "arn:aws:glue:us-east-1:837132623653:catalog"
+                - "arn:aws:glue:us-east-1:837132623653:table/my_athena_database/my_raw_data_table"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/runAthenaQuery.ts
 
 Outputs:
   ApiUrl:
