@@ -1,4 +1,3 @@
-// __tests__/ingestData.test.ts
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHandler } from "../src/ingestData";
@@ -15,16 +14,16 @@ describe("ingestData Lambda Function", () => {
     process.env.BUCKET_NAME = "datagonein60-rawdata";
 
     // Create the handler by injecting the fake S3 client.
-    testHandler = createHandler(fakeS3Client as unknown as  S3Client);
+    testHandler = createHandler(fakeS3Client as unknown as S3Client);
   });
 
-  it("should successfully ingest data and return a 200 response", async () => {
+  it("should successfully ingest data and return a 200 response with a partitioned S3 key", async () => {
     // Arrange: Create a fake API Gateway event with valid JSON body.
     const testData = {
       sensorId: "S123",
       rawTemperature: 85,
       rawHumidity: 55,
-      timestamp: "2025-02-10T12:00:00Z",
+      timestamp: "2025-02-10T12:05:00Z"
     };
 
     const event: APIGatewayProxyEvent = {
@@ -39,7 +38,7 @@ describe("ingestData Lambda Function", () => {
       multiValueQueryStringParameters: null,
       stageVariables: null,
       requestContext: {} as any,
-      resource: "",
+      resource: ""
     };
 
     // Simulate a successful S3 operation.
@@ -59,6 +58,11 @@ describe("ingestData Lambda Function", () => {
     const calledCommand = sendMock.mock.calls[0][0];
     expect(calledCommand).toBeInstanceOf(PutObjectCommand);
     expect(calledCommand.input.Bucket).toEqual("datagonein60-rawdata");
+
+    // Verify that the S3 key is partitioned by time.
+    const key: string = calledCommand.input.Key;
+    const partitionRegex = /^raw\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/\d{2}\/[a-f0-9\-]+\.json$/;
+    expect(key).toMatch(partitionRegex);
   });
 
   it("should return a 500 error when the request body is invalid", async () => {
@@ -75,7 +79,7 @@ describe("ingestData Lambda Function", () => {
       multiValueQueryStringParameters: null,
       stageVariables: null,
       requestContext: {} as any,
-      resource: "",
+      resource: ""
     };
 
     // Act: Invoke the Lambda handler.

@@ -18,16 +18,35 @@ export const createHandler = (
 
   return async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
     const BUCKET_NAME = process.env.BUCKET_NAME!;
+    let requestBody: any;
+
+    // Attempt to parse the incoming JSON.
     try {
-      console.log("Received event:", JSON.stringify(event));
+      requestBody = event.body ? JSON.parse(event.body) : {};
+    } catch (parseError: any) {
+      console.error("Error parsing JSON:", parseError);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: "Invalid JSON format" }),
+      };
+    }
 
-      // Parse the JSON body (assuming it's an object)
-      const requestBody = event.body ? JSON.parse(event.body) : {};
+    try {
+      // Extract the timestamp from the payload; if not provided, use the current time.
+      const timestampStr = requestBody.timestamp;
+      const date = timestampStr ? new Date(timestampStr) : new Date();
 
-      // Generate a unique key for storing the data in S3
-      const objectKey = `raw/${uuidv4()}.json`;
+      // Build partition keys (using UTC)
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const hour = String(date.getUTCHours()).padStart(2, '0');
+      const minute = String(date.getUTCMinutes()).padStart(2, '0');
 
-      // Put the JSON data into the S3 bucket
+      // Construct an S3 object key using a partitioned path
+      const objectKey = `raw/${year}/${month}/${day}/${hour}/${minute}/${uuidv4()}.json`;
+
+      // Put the JSON data into the S3 bucket at the partitioned location
       await client.send(new PutObjectCommand({
         Bucket: BUCKET_NAME,
         Key: objectKey,
@@ -45,9 +64,7 @@ export const createHandler = (
       console.error("Error ingesting data:", error);
       return {
         statusCode: 500,
-        body: JSON.stringify({
-          error: error.message,
-        }),
+        body: JSON.stringify({ error: error.message }),
       };
     }
   };

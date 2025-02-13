@@ -51,3 +51,7 @@ MOCKS
 - `sam build --manifest ./package.json` - tells SAM to transpile and bundle functions
 - `sam deploy` then deploys to the cloud
 - git check point - feat: tests builds deploys works
+- Setting up Athena from console. Connect to S3 Bucket, then create a database, then create a table, then run a query. 
+- Queries can be run from Lambda functions
+- refactor ingestion lambda to partion data according to date for filtering
+- git check point - feat: ingest data to date time partitions in s3
