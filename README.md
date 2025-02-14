@@ -1,27 +1,152 @@
-# data-gone-60
-Example code for Data Gone in 60 Seconds
+# Data Gone in 60 Seconds – An ETL Pipeline using AWS SAM
 
-Webhook to receive batched JSON from data source
-- API Gateway
-- Lambda receives and puts to S3
+**Data Gone in 60 Seconds** is an AWS serverless ETL pipeline that demonstrates how to ingest, transform, and deliver sensor data. The project leverages several AWS services including Lambda, S3, Athena, SQS, and the AWS Glue Data Catalog. It also uses a custom external endpoint (powered by [val.town](https://val.town)) to simulate a data warehouse.
 
-Athena
-- create table from S3 data
-- filter and put in new S3
+## Overview
 
-SQS 
-- SQS Queue to hold finished data as message
-- Lambda to poll queue and POST to external endpoint
+This pipeline is composed of three major components:
 
-MOCKS
-- incoming data
-- data warehouse landing endpoint
+1. **Data Ingestion**  
+   A Lambda function (`ingestData.ts`) receives POST requests containing sensor data, enriches the payload with a computed S3 key (based on a timestamp), and writes the data to an S3 bucket partitioned by date and time.
 
-# Prerequisites
+2. **Data Transformation with Athena**  
+   Another Lambda function (`runAthenaQuery.ts`) runs an Athena query against the partitioned raw data. The query converts temperatures from Fahrenheit to Celsius and filters data based on a specified time window and temperature range. Matching records are sent to an SQS queue.
+
+3. **Batch Delivery to External Endpoint**  
+   A final Lambda function (`sendToExternalBatch.ts`) is triggered by SQS. It batches multiple messages together and sends them in a single POST request to an external endpoint (e.g., [https://pchinjr-externaldatawarehouse.web.val.run](https://pchinjr-externaldatawarehouse.web.val.run)). The endpoint uses SQLite to store the sensor data.
+
+## Prerequisites
 - AWS Account - AWS User with console and command line access - set up AWS Creds
 - AWS CLI - aws-cli/2.24.1 Python/3.12.6 Linux/6.5.0-1025-azure exe/x86_64.ubuntu.20s
 - AWS SAM CLI - version 1.133.0
 - NodeJS - v20.18.1
+
+## Architecture Diagram
+
+```
+       +------------------+
+       |  API Gateway     | <-- Protected by API Key
+       +--------+---------+
+                |
+                v
+       +------------------+       Enriched JSON
+       | DataIngestFunction| -----------------------> S3 (raw data, partitioned)
+       +------------------+
+                |
+                v
+       +------------------+
+       | AthenaQueryFunction |  <-- Runs query on partitioned S3 data via Glue Catalog
+       +------------------+
+                |
+                v
+       +------------------+
+       | SQS Queue        |  <-- Holds filtered query results
+       +------------------+
+                |
+                v
+       +------------------+
+       | SendToExternalBatchFunction |  <-- Batches messages and sends a POST request
+       +------------------+
+                |
+                v
+       +------------------+
+       | External Endpoint (val.town) |
+       +------------------+
+```
+
+## Project Components
+
+### 1. Data Ingestion (ingestData.ts)
+
+- **Functionality:**  
+  Accepts a POST request with sensor data, extracts or uses the current timestamp, and writes the data to an S3 bucket under a partitioned key such as:
+  ```
+  raw/YYYY/MM/DD/HH/mm/<uuid>.json
+  ```
+- **Key Debugging Points:**  
+  - Ensured that the payload is enriched with an `objectKey`.
+  - Handled invalid JSON by returning a 400 response.
+
+### 2. Athena Query (runAthenaQuery.ts)
+
+- **Functionality:**  
+  Executes an Athena query on the raw data table to filter records within a specific time partition and temperature range. The query converts `rawTemperature` (Fahrenheit) to Celsius and returns matching records.
+- **Key Debugging Points:**  
+  - Ensured the query string is constructed correctly with proper partition filters.
+  - Explicitly specified the Athena catalog and database in the query execution context.
+  - Faced issues with IAM permissions and typos in ARNs which were resolved.
+  - Implemented a polling mechanism that repeatedly checks Athena for query completion before retrieving results.
+
+### 3. Batch Delivery to External Endpoint (sendToExternalBatch.ts)
+
+- **Functionality:**  
+  Triggered by SQS, this function batches incoming messages and sends them as a single POST request to the external endpoint.  
+- **Key Debugging Points:**  
+  - Added retry logic with exponential backoff for the outbound HTTP POST.
+  - Configured SQS event source mapping with a batching window to accumulate messages.
+  - Updated the external endpoint URL to `https://pchinjr-externaldatawarehouse.web.val.run`.
+  - Adjusted the IAM policies to restrict SQS send permissions to the correct queue ARN.
+
+## Deployment Instructions
+
+1. **Clone the Repository:**
+   ```bash
+   git clone https://github.com/yourusername/data-gone-60.git
+   cd data-gone-60
+   ```
+
+2. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Build the Application:**
+   ```bash
+   sam build --manifest ./package.json
+   ```
+
+4. **Deploy the Stack:**
+   ```bash
+   sam deploy --guided
+   ```
+   Follow the prompts to specify your stack name, AWS region, and other parameters.
+
+## Testing the Pipeline
+
+- **Local Testing:**  
+  Use `sam local invoke` to test individual Lambda functions.
+  - Example for testing the Athena query function locally:
+    ```bash
+    sam local invoke AthenaQueryFunction --event sample-athena-query.json
+    ```
+  - For SQS-triggered functions, simulate an SQS event using a sample JSON file.
+
+- **End-to-End Testing:**  
+  1. Send a POST request to your API Gateway endpoint (with the proper API key) to ingest sensor data.
+  2. Ensure that new data is written to S3 with a partitioned key.
+  3. Run the AthenaQueryFunction (either via the console or scheduled) to process data and send messages to SQS.
+  4. Verify that the SendToExternalBatchFunction processes the SQS messages and sends a single batch POST to the external endpoint.
+  5. Confirm that the external endpoint logs the successful insertion of data into its SQLite database.
+
+## Debugging & Troubleshooting
+
+During development, we encountered several challenges:
+- **Missing Enrichment:**  
+  Initially, old data lacked the `objectKey` field. After updating the ingestion function to enrich the payload, new data included this field.
+- **Athena Query Issues:**  
+  We ran into TABLE_NOT_FOUND errors due to IAM permissions and typographical errors in ARNs. Explicitly specifying the Athena catalog (`AwsDataCatalog`) and correcting the IAM policies resolved this.
+- **SQS Message Batching:**  
+  We configured a batching window to throttle requests to the external endpoint and implemented exponential backoff in case of errors.
+- **Local vs. Deployed Differences:**  
+  Using `sam local invoke` worked as expected, but invoking via the AWS Lambda console required ensuring all environment variables and IAM permissions were identical between local and production environments.
+
+## Conclusion
+
+This project demonstrates how to build a serverless ETL pipeline using AWS SAM that ingests sensor data, transforms it using Athena, and delivers processed records in batched requests to an external endpoint. We’ve iterated through a debugging process to resolve issues with IAM permissions, metadata propagation, and batching logic. 
+  
+---
+
+This README provides a comprehensive guide for new users and documents the challenges and solutions encountered during development.
 
 # Process
 - AWS SSO User signed into console, given creds and set environment vars
