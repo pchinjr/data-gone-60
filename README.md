@@ -63,3 +63,5 @@ MOCKS
 - aws lambda invoke --function-name data-gone-60-AthenaQueryFunction-t4LVXkcRrJPZ output.json --payload '{}'
 - debugging missing table, I had a typo in the resource, and then figured out the cascade of IAM policies afterwards
 - git check point - feat: Athena works and SQS works
+- build out sqs batch lambda function and create val.town endpoint to receive json
+- git check point - feat: complete pipeline with valtown integration

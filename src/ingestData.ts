@@ -46,11 +46,17 @@ export const createHandler = (
       // Construct an S3 object key using a partitioned path
       const objectKey = `raw/${year}/${month}/${day}/${hour}/${minute}/${uuidv4()}.json`;
 
+       // Inject the computed objectKey into the payload, so it gets stored with the data.
+       const enrichedPayload = {
+        ...requestBody,
+        objectKey,
+      };
+
       // Put the JSON data into the S3 bucket at the partitioned location
       await client.send(new PutObjectCommand({
         Bucket: BUCKET_NAME,
         Key: objectKey,
-        Body: JSON.stringify(requestBody),
+        Body: JSON.stringify(enrichedPayload),
       }));
 
       return {

@@ -155,6 +155,28 @@ Resources:
         EntryPoints:
           - src/runAthenaQuery.ts
 
+  SendToExternalBatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: sendToExternalBatch.handler
+      CodeUri: src/
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          EXTERNAL_ENDPOINT_URL: "https://pchinjr-externaldatawarehouse.web.val.run"
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProcessedDataQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 10
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/sendToExternalBatch.ts
+
 Outputs:
   ApiUrl:
     Description: "API Gateway endpoint URL for the Data Ingest Function"
