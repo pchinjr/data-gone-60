@@ -121,6 +121,7 @@ This pipeline consists of three main stages:
 3. **Set Up Val Town Data Warehouse**  
    - In Val Town, create an “externalDataWarehouse” endpoint.  
    - Copy its full URL (e.g. `https://pchinjr-externaldatawarehouse.web.val.run`).
+   - https://docs.val.town/vals/http/
 
 4. **Bake the Val Town URL into the Lambda**  
    - Open your `template.yaml` (SAM template).  
