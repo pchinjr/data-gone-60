@@ -131,3 +131,5 @@ dist
 
 # SAM
 .aws-sam/
+
+.env

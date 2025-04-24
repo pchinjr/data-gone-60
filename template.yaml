@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Data Gone in 60 Seconds - Data Ingestion SAM Project with API Key Protection
-  This project receives POST requests and writes the data into an S3 bucket.
-  The API is protected with an API key.
+  Receives POSTed metric batches, writes date‐partitioned JSON lines to S3,
+  runs Athena queries by date, and dispatches results via SQS + external HTTP.
 
 Globals:
   Function:
@@ -11,13 +11,11 @@ Globals:
     Timeout: 30
 
 Resources:
-  # S3 Bucket to store incoming data
   RawDataBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: datagonein60-rawdata
 
-  # Explicit API definition with API key requirement
   DataIngestApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -30,7 +28,6 @@ Resources:
           LoggingLevel: INFO
           DataTraceEnabled: true
 
-  # Lambda Function to ingest data via API Gateway
   DataIngestFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -48,82 +45,61 @@ Resources:
             Method: post
       Policies:
         - S3WritePolicy:
-            BucketName: datagonein60-rawdata
+            BucketName: !Ref RawDataBucket
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints:
           - src/ingestData.ts
 
-  # API Key Resource
   IngestApiKey:
     Type: AWS::ApiGateway::ApiKey
     Properties:
       Name: IngestApiKey
       Enabled: true
 
-  # Usage Plan for the API
   IngestUsagePlan:
     Type: AWS::ApiGateway::UsagePlan
     DependsOn: DataIngestApiProdStage
     Properties:
       UsagePlanName: IngestUsagePlan
-      Description: "Usage plan for DataIngest API"
       ApiStages:
         - ApiId: !Ref DataIngestApi
           Stage: Prod
 
-  # Associate the API Key with the Usage Plan
   IngestUsagePlanKey:
     Type: AWS::ApiGateway::UsagePlanKey
     Properties:
       KeyId: !Ref IngestApiKey
       KeyType: API_KEY
       UsagePlanId: !Ref IngestUsagePlan
-  
-  # Dedicated SQS Queue
+
   ProcessedDataQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: ProcessedDataQueue
 
-  # Lambda Function to Query Athena
   AthenaQueryFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: runAthenaQuery.handler
       CodeUri: src/
-      Runtime: nodejs20.x
       Environment:
         Variables:
-          ATHENA_DATABASE: my_athena_database
-          ATHENA_TABLE: my_raw_data_table
+          ATHENA_DATABASE:       my_athena_database
+          ATHENA_TABLE:          my_raw_data_table
           ATHENA_OUTPUT_LOCATION: s3://datagonein60-rawdata/transformed/
-          SQS_QUEUE_URL: !GetAtt ProcessedDataQueue.QueueUrl
-          QUERY_YEAR: "2025"
-          QUERY_MONTH: "02"
-          QUERY_DAY: "10"
-          QUERY_HOUR: "12"
-          QUERY_MINUTE: "05"
-          TEMP_MIN: "30"
-          TEMP_MAX: "32"
+          SQS_QUEUE_URL:         !GetAtt ProcessedDataQueue.QueueUrl
+          QUERY_YEAR:            "2025"
+          QUERY_MONTH:           "02"
+          QUERY_DAY:             "10"
       Policies:
-        - Version: "2012-10-17"
-          Statement:
+        - Statement:
             - Effect: Allow
               Action:
                 - athena:StartQueryExecution
                 - athena:GetQueryExecution
                 - athena:GetQueryResults
-                - athena:ListDataCatalogs,
-                - athena:GetDataCatalog,
-                - athena:CreateDataCatalog,
-                - athena:UpdateDataCatalog,
-                - athena:DeleteDataCatalog,
-                - athena:GetDatabase,
-                - athena:ListDatabases,
-                - athena:GetTableMetadata,
-                - athena:ListTableMetadata
               Resource: "*"
             - Effect: Allow
               Action:
@@ -133,22 +109,10 @@ Resources:
               Action:
                 - s3:ListBucket
                 - s3:GetBucketLocation
-              Resource: "arn:aws:s3:::datagonein60-rawdata"
-            - Effect: Allow
-              Action:
-                - s3:PutObject
                 - s3:GetObject
-              Resource: "arn:aws:s3:::datagonein60-rawdata/*"
-            - Effect: Allow
-              Action:
-                - glue:GetDatabase
-                - glue:GetTable
-                - glue:GetCatalog
-                - glue:GetPartition
-              Resource: 
-                - "arn:aws:glue:us-east-1:837132623653:database/my_athena_database"
-                - "arn:aws:glue:us-east-1:837132623653:catalog"
-                - "arn:aws:glue:us-east-1:837132623653:table/my_athena_database/my_raw_data_table"
+              Resource:
+                - !Sub arn:aws:s3:::${RawDataBucket}
+                - !Sub arn:aws:s3:::${RawDataBucket}/*
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -160,10 +124,9 @@ Resources:
     Properties:
       Handler: sendToExternalBatch.handler
       CodeUri: src/
-      Runtime: nodejs20.x
       Environment:
         Variables:
-          EXTERNAL_ENDPOINT_URL: "https://pchinjr-externaldatawarehouse.web.val.run"
+          EXTERNAL_ENDPOINT_URL: "https://api.val.town/data-warehouse"
       Events:
         SQSTrigger:
           Type: SQS
