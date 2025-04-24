@@ -120,13 +120,13 @@ This pipeline consists of three main stages:
 
 3. **Set Up Val Town Data Warehouse**  
    - In Val Town, create an “externalDataWarehouse” endpoint.  
-   - Copy its full URL (e.g. `https://api.val.town/data-warehouse`).
+   - Copy its full URL (e.g. `https://pchinjr-externaldatawarehouse.web.val.run`).
 
 4. **Bake the Val Town URL into the Lambda**  
    - Open your `template.yaml` (SAM template).  
    - Under the **SendToExternalBatchFunction** resource’s `Environment.Variables`, set:  
      ```yaml
-     EXTERNAL_ENDPOINT_URL: "https://api.val.town/data-warehouse"
+     EXTERNAL_ENDPOINT_URL: "https://pchinjr-externaldatawarehouse.web.val.run"
      ```  
    - This ensures `sendToExternalBatch.ts` posts to your Val Town endpoint.
 
@@ -218,6 +218,7 @@ This pipeline consists of three main stages:
       DELETE FROM <that_table>;
       SELECT * FROM <that_table>;
       ```
+    - https://docs.val.town/std/sqlite/
 ## Conclusion
 
 This project demonstrates how to build a serverless ETL pipeline using AWS SAM that ingests sensor data, transforms it using Athena, and delivers processed records in batched requests to an external endpoint. We’ve iterated through a debugging process to resolve issues with IAM permissions, metadata propagation, and batching logic. 
