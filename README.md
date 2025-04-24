@@ -89,66 +89,121 @@ This pipeline is composed of three major components:
 
 ## Deployment Instructions
 
-1. **Clone the Repository:**
+1. **Fork & Clone**  
+   - Fork the GitHub repo and open it in a new Codespace.
+
+2. **Configure AWS Credentials**  
    ```bash
-   git clone https://github.com/yourusername/data-gone-60.git
-   cd data-gone-60
+   aws configure
+   ```  
+   Enter your AWS Access Key, Secret, default region, etc.
+
+3. **Set Up Val Town Data Warehouse**  
+   - In Val Town, create an “externalDataWarehouse” endpoint.  
+   - Copy its full URL (e.g. `https://api.val.town/data-warehouse`).
+
+4. **Bake the Val Town URL into the Lambda**  
+   - Open your `template.yaml` (SAM template).  
+   - Under the **SendToExternalBatchFunction** resource’s `Environment.Variables`, set:  
+     ```yaml
+     EXTERNAL_ENDPOINT_URL: "https://api.val.town/data-warehouse"
+     ```  
+   - This ensures `sendToExternalBatch.ts` posts to your Val Town endpoint.
+
+5. **Install the Build Tool**  
+   ```bash
+   npm install -g esbuild
    ```
 
-2. **Install Dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Build the Application:**
+6. **Build the SAM App**  
    ```bash
    sam build --manifest ./package.json
    ```
 
-4. **Deploy the Stack:**
+7. **Deploy with Guided Prompts**  
    ```bash
    sam deploy --guided
+   ```  
+   - Note down the **API Gateway URL**.  
+   - Note down the **API Key** (or find it in the CloudFormation Outputs).
+
+8. **Prepare Athena**  
+   Use your actual bucket name `datagonein60-rawdata-837132623653` in every LOCATION. In Athena, run:
+
+  ```sql
+  -- 1) Drop old metadata
+  DROP DATABASE IF EXISTS my_athena_database CASCADE;
+
+  -- 2) Recreate pointing at the new raw prefix
+  CREATE DATABASE my_athena_database
+    LOCATION 's3://datagonein60-rawdata-837132623653/raw/';
+
+  -- 3) Define the table with date-only partitions
+  CREATE EXTERNAL TABLE my_athena_database.my_raw_data_table (
+    sensorid       STRING,
+    rawtemperature DOUBLE,
+    rawhumidity    DOUBLE,
+    timestamp      STRING,
+    objectkey      STRING
+  )
+  PARTITIONED BY (
+    year  STRING,
+    month STRING,
+    day   STRING
+  )
+  ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
+  WITH SERDEPROPERTIES (
+    'ignore.malformed.json' = 'true'
+  )
+  STORED AS TEXTFILE
+  LOCATION 's3://datagonein60-rawdata-837132623653/raw/';
+
+  -- 4) Register all existing partitions
+  MSCK REPAIR TABLE my_athena_database.my_raw_data_table;
+
+  -- 5) Verify
+  SHOW PARTITIONS my_athena_database.my_raw_data_table;
+  SELECT * 
+    FROM my_athena_database.my_raw_data_table 
+  LIMIT 10;
+  ```
+
+9. **Ingest Sample Data**  
+   ```bash
+   curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "x-api-key: <API_KEY>" \
+     -d @samplePayloads.json \
+     https://<API_ID>.execute-api.<region>.amazonaws.com/Prod/ingest
    ```
-   Follow the prompts to specify your stack name, AWS region, and other parameters.
 
-## Testing the Pipeline
+10. **Verify S3 Storage**  
+    - In the S3 console, confirm files under `s3://datagonein60-rawdata/raw/year=YYYY/month=MM/day=DD/…`
 
-- **Local Testing:**  
-  Use `sam local invoke` to test individual Lambda functions.
-  - Example for testing the Athena query function locally:
-    ```bash
-    sam local invoke AthenaQueryFunction --event sample-athena-query.json
-    ```
-  - For SQS-triggered functions, simulate an SQS event using a sample JSON file.
+11. **Run & Test the Athena Query Lambda**  
+    - In the Lambda console, open **runAthenaQuery** → **Test** → invoke.  
+    - Confirm `"processedRows"` > 0 and logs show your SQL.
 
-- **End-to-End Testing:**  
-  1. Send a POST request to your API Gateway endpoint (with the proper API key) to ingest sensor data.
-  2. Ensure that new data is written to S3 with a partitioned key.
-  3. Run the AthenaQueryFunction (either via the console or scheduled) to process data and send messages to SQS.
-  4. Verify that the SendToExternalBatchFunction processes the SQS messages and sends a single batch POST to the external endpoint.
-  5. Confirm that the external endpoint logs the successful insertion of data into its SQLite database.
+12. **Inspect SQS Messages**  
+    - In SQS console, open **ProcessedDataQueue** → **Messages available**  
+    - Optionally, **Receive message** to peek at the JSON bodies.
 
-## Debugging & Troubleshooting
-
-During development, we encountered several challenges:
-- **Missing Enrichment:**  
-  Initially, old data lacked the `objectKey` field. After updating the ingestion function to enrich the payload, new data included this field.
-- **Athena Query Issues:**  
-  We ran into TABLE_NOT_FOUND errors due to IAM permissions and typographical errors in ARNs. Explicitly specifying the Athena catalog (`AwsDataCatalog`) and correcting the IAM policies resolved this.
-- **SQS Message Batching:**  
-  We configured a batching window to throttle requests to the external endpoint and implemented exponential backoff in case of errors.
-- **Local vs. Deployed Differences:**  
-  Using `sam local invoke` worked as expected, but invoking via the AWS Lambda console required ensuring all environment variables and IAM permissions were identical between local and production environments.
-
+13. **Validate Delivery to Val Town**  
+    - In your Val Town SQLite endpoint, run:
+      ```sql
+      SELECT * FROM <endpoint-script-name>_sensor_data_1;
+      ```
+    - To clear and re-check:
+      ```sql
+      DELETE FROM <that_table>;
+      SELECT * FROM <that_table>;
+      ```
 ## Conclusion
 
 This project demonstrates how to build a serverless ETL pipeline using AWS SAM that ingests sensor data, transforms it using Athena, and delivers processed records in batched requests to an external endpoint. We’ve iterated through a debugging process to resolve issues with IAM permissions, metadata propagation, and batching logic. 
   
 ---
-
-This README provides a comprehensive guide for new users and documents the challenges and solutions encountered during development.
-
-# Process
+# Debug Process
 - AWS SSO User signed into console, given creds and set environment vars
 - ```export AWS_ACCESS_KEY_ID="xxxxxx"
     export AWS_SECRET_ACCESS_KEY="xxxxxxx"
@@ -193,95 +248,4 @@ This README provides a comprehensive guide for new users and documents the chall
 - problem: athena needs line breaks in json for multiple objects
 - problem: literal partion path values need to handled during ingest
 - fix IAM for new glue operations from ingest lambda
-
-1. **Fork & Clone**  
-   - Fork the GitHub repo and open it in a new Codespace.
-
-2. **Configure AWS Credentials**  
-   ```bash
-   aws configure
-   ```  
-   Enter your AWS Access Key, Secret, default region, etc.
-
-3. **Set Up Val Town Data Warehouse**  
-   - In Val Town, create an “externalDataWarehouse” endpoint.  
-   - Copy its full URL (e.g. `https://api.val.town/data-warehouse`).
-
-4. **Bake the Val Town URL into the Lambda**  
-   - Open your `template.yaml` (SAM template).  
-   - Under the **SendToExternalBatchFunction** resource’s `Environment.Variables`, set:  
-     ```yaml
-     EXTERNAL_ENDPOINT_URL: "https://api.val.town/data-warehouse"
-     ```  
-   - This ensures `sendToExternalBatch.ts` posts to your Val Town endpoint.
-
-5. **Install the Build Tool**  
-   ```bash
-   npm install -g esbuild
-   ```
-
-6. **Build the SAM App**  
-   ```bash
-   sam build --manifest ./package.json
-   ```
-
-7. **Deploy with Guided Prompts**  
-   ```bash
-   sam deploy --guided
-   ```  
-   - Note down the **API Gateway URL**.  
-   - Note down the **API Key** (or find it in the CloudFormation Outputs).
-
-8. **Prepare Athena**  
-   In the Athena console or via CLI, run:
-   ```sql
-   CREATE DATABASE IF NOT EXISTS my_athena_database
-     LOCATION 's3://datagonein60-rawdata/raw/';
-   
-   CREATE EXTERNAL TABLE my_athena_database.my_raw_data_table (
-     sensorid       STRING,
-     rawtemperature DOUBLE,
-     rawhumidity    DOUBLE,
-     timestamp      STRING,
-     objectkey      STRING
-   )
-   PARTITIONED BY (year STRING, month STRING, day STRING)
-   ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
-   STORED AS TEXTFILE
-   LOCATION 's3://datagonein60-rawdata/raw/';
-   
-   MSCK REPAIR TABLE my_athena_database.my_raw_data_table;
-   ```
-
-9. **Ingest Sample Data**  
-   ```bash
-   curl -X POST \
-     -H "Content-Type: application/json" \
-     -H "x-api-key: <API_KEY>" \
-     -d @sample-payload.json \
-     https://<API_ID>.execute-api.<region>.amazonaws.com/Prod/ingest
-   ```
-
-10. **Verify S3 Storage**  
-    - In the S3 console, confirm files under `s3://datagonein60-rawdata/raw/year=YYYY/month=MM/day=DD/…`
-
-11. **Run & Test the Athena Query Lambda**  
-    - In the Lambda console, open **runAthenaQuery** → **Test** → invoke.  
-    - Confirm `"processedRows"` > 0 and logs show your SQL.
-
-12. **Inspect SQS Messages**  
-    - In SQS console, open **ProcessedDataQueue** → **Messages available**  
-    - Optionally, **Receive message** to peek at the JSON bodies.
-
-13. **Validate Delivery to Val Town**  
-    - In your Val Town SQLite endpoint, run:
-      ```sql
-      SELECT * FROM <endpoint-script-name>_sensor_data_1;
-      ```
-    - To clear and re-check:
-      ```sql
-      DELETE FROM <that_table>;
-      SELECT * FROM <that_table>;
-      ```
-   
-You’re now ready to fork, deploy, ingest, and see your data flow from API → S3 → Athena → SQS → Val Town!
+- tons of changes to the IAM policies to enable the query lamba the correct actions
