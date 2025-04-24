@@ -212,7 +212,7 @@ This pipeline consists of three main stages:
 13. **Validate Delivery to Val Town**  
     - In your Val Town SQLite endpoint, run:
       ```sql
-      SELECT * FROM <endpoint-script-name>_sensor_data_1;
+      SELECT * FROM externalDataWarehouse_sensor_data;
       ```
     - To clear and re-check:
       ```sql
