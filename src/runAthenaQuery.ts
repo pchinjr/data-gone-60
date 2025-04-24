@@ -37,7 +37,8 @@ export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxy
     // Start query execution
     const startResp = await athenaClient.send(new StartQueryExecutionCommand({
       QueryString: queryString,
-      QueryExecutionContext: { Database: DATABASE },
+      QueryExecutionContext: { Catalog: "AwsDataCatalog", Database: DATABASE },
+      WorkGroup: "primary",
       ResultConfiguration: { OutputLocation: OUTPUT_LOCATION }
     }));
 

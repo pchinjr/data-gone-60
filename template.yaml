@@ -5,6 +5,13 @@ Description: >
   Receives POSTed metric batches, writes date‐partitioned JSON lines to S3,
   runs Athena queries by date, and dispatches results via SQS + external HTTP.
 
+Parameters:
+  RawDataBucketPrefix:
+    Type: String
+    Default: datagonein60-rawdata
+    Description: >
+      Prefix for your S3 bucket (the full name will be <prefix>-<AWS::AccountId>).
+
 Globals:
   Function:
     Runtime: nodejs20.x
@@ -14,7 +21,7 @@ Resources:
   RawDataBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: datagonein60-rawdata
+      BucketName: !Sub '${RawDataBucketPrefix}-${AWS::AccountId}'
 
   DataIngestApi:
     Type: AWS::Serverless::Api
@@ -35,7 +42,7 @@ Resources:
       CodeUri: src/
       Environment:
         Variables:
-          BUCKET_NAME: !Ref RawDataBucket
+          BUCKET_NAME: !Sub '${RawDataBucketPrefix}-${AWS::AccountId}'
       Events:
         IngestAPI:
           Type: Api
@@ -45,7 +52,7 @@ Resources:
             Method: post
       Policies:
         - S3WritePolicy:
-            BucketName: !Ref RawDataBucket
+            BucketName: !Sub '${RawDataBucketPrefix}-${AWS::AccountId}'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -86,33 +93,79 @@ Resources:
       CodeUri: src/
       Environment:
         Variables:
-          ATHENA_DATABASE:       my_athena_database
-          ATHENA_TABLE:          my_raw_data_table
-          ATHENA_OUTPUT_LOCATION: s3://datagonein60-rawdata/transformed/
-          SQS_QUEUE_URL:         !GetAtt ProcessedDataQueue.QueueUrl
-          QUERY_YEAR:            "2025"
-          QUERY_MONTH:           "02"
-          QUERY_DAY:             "10"
+          ATHENA_DATABASE:        my_athena_database
+          ATHENA_TABLE:           my_raw_data_table
+          ATHENA_OUTPUT_LOCATION: !Sub 's3://${RawDataBucketPrefix}-${AWS::AccountId}/transformed/'
+          SQS_QUEUE_URL:          !GetAtt ProcessedDataQueue.QueueUrl
+          QUERY_YEAR:             "2025"
+          QUERY_MONTH:            "02"
+          QUERY_DAY:              "10"
       Policies:
-        - Statement:
-            - Effect: Allow
+        - Version: '2012-10-17'
+          Statement:
+            # Athena query execution
+            - Sid: ExecuteAthenaQueries
+              Effect: Allow
               Action:
                 - athena:StartQueryExecution
                 - athena:GetQueryExecution
                 - athena:GetQueryResults
-              Resource: "*"
-            - Effect: Allow
+              Resource:
+                - !Sub arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/primary
+                - !Sub arn:aws:athena:${AWS::Region}:${AWS::AccountId}:query/*
+
+            # Athena metadata reads
+            - Sid: ReadAthenaMetadata
+              Effect: Allow
               Action:
-                - sqs:SendMessage
-              Resource: !GetAtt ProcessedDataQueue.Arn
-            - Effect: Allow
+                - athena:GetDataCatalog
+                - athena:ListDataCatalogs
+                - athena:GetDatabase
+                - athena:ListDatabases
+                - athena:GetTableMetadata
+                - athena:ListTableMetadata
+              Resource:
+                - !Sub arn:aws:athena:${AWS::Region}:${AWS::AccountId}:datacatalog/AwsDataCatalog
+
+            # Glue metastore reads
+            - Sid: ReadGlueMetastore
+              Effect: Allow
+              Action:
+                - glue:GetCatalogImportStatus
+                - glue:GetDatabase
+                - glue:GetTable
+                - glue:GetDataCatalog
+                - glue:GetPartition
+              Resource:
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/my_athena_database
+                - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/my_athena_database/my_raw_data_table
+
+            # S3: bucket‐level (list & location) vs. object‐level (get/put)
+            - Sid: S3BucketLevel
+              Effect: Allow
               Action:
                 - s3:ListBucket
                 - s3:GetBucketLocation
-                - s3:GetObject
               Resource:
-                - !Sub arn:aws:s3:::${RawDataBucket}
-                - !Sub arn:aws:s3:::${RawDataBucket}/*
+                - !Sub arn:aws:s3:::${RawDataBucketPrefix}-${AWS::AccountId}
+
+            - Sid: S3ObjectLevel
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${RawDataBucketPrefix}-${AWS::AccountId}/*
+                # note: this covers both raw/* and transformed/*
+
+            # SQS send
+            - Sid: SQSSend
+              Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                - !GetAtt ProcessedDataQueue.Arn
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -126,7 +179,7 @@ Resources:
       CodeUri: src/
       Environment:
         Variables:
-          EXTERNAL_ENDPOINT_URL: "https://api.val.town/data-warehouse"
+          EXTERNAL_ENDPOINT_URL: "https://pchinjr-externaldatawarehouse.web.val.run"
       Events:
         SQSTrigger:
           Type: SQS
