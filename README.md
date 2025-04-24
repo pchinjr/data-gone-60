@@ -4,16 +4,36 @@
 
 ## Overview
 
-This pipeline is composed of three major components:
+This pipeline consists of three main stages:
 
 1. **Data Ingestion**  
-   A Lambda function (`ingestData.ts`) receives POST requests containing sensor data, enriches the payload with a computed S3 key (based on a timestamp), and writes the data to an S3 bucket partitioned by date and time.
+   - **Lambda:** `ingestData.ts`  
+   - **What it does:**  
+     - Accepts a POST with an array of sensor records.  
+     - Extracts the **date** (YYYY-MM-DD) from the first record’s `timestamp`.  
+     - Writes a single newline-delimited JSON file under  
+       `s3://<bucket>/raw/year={YYYY}/month={MM}/day={DD}/{uuid}.json`.  
+     - **Partitions by date only** (year, month, day) for much faster Athena scans and no hour/minute bloat.
 
 2. **Data Transformation with Athena**  
-   Another Lambda function (`runAthenaQuery.ts`) runs an Athena query against the partitioned raw data. The query converts temperatures from Fahrenheit to Celsius and filters data based on a specified time window and temperature range. Matching records are sent to an SQS queue.
+   - **Lambda:** `runAthenaQuery.ts`  
+   - **What it does:**  
+     - Kicks off an Athena query (on **AwsDataCatalog → my_athena_database**) that:  
+       - Converts Fahrenheit to Celsius.  
+       - Filters by date partition (`year`, `month`, `day`) and any in-SQL time/temperature predicates.  
+     - Writes query results (CSV) to  
+       `s3://<bucket>/transformed/{queryExecutionId}.csv`.  
+     - Sends each matching row as a JSON message to the SQS queue.  
+     - **IAM:** locked down to only the `raw/` and `transformed/` prefixes plus Glue/athena metadata calls.
 
 3. **Batch Delivery to External Endpoint**  
-   A final Lambda function (`sendToExternalBatch.ts`) is triggered by SQS. It batches multiple messages together and sends them in a single POST request to an external endpoint (e.g., [https://pchinjr-externaldatawarehouse.web.val.run](https://pchinjr-externaldatawarehouse.web.val.run)). The endpoint uses SQLite to store the sensor data.
+   - **Lambda:** `sendToExternalBatch.ts`  
+   - **What it does:**  
+     - Triggered by SQS in batches (configurable size/window).  
+     - Posts the batch of JSON messages in one HTTP `POST` to your Val Town endpoint  
+       (set via `EXTERNAL_ENDPOINT_URL` in the SAM template).  
+     - The external service (e.g. SQLite on Val Town) ingests these records into its own table.
+
 
 ## Prerequisites
 - AWS Account - AWS User with console and command line access - set up AWS Creds
