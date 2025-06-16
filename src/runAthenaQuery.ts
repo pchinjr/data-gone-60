@@ -1,10 +1,11 @@
 import { APIGatewayProxyHandler, APIGatewayProxyResult } from "aws-lambda";
 import { AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand, GetQueryResultsCommand } from "@aws-sdk/client-athena";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import * as AWSXRay from "aws-xray-sdk-core";
 
 // AWS SDK clients
-const athenaClient = new AthenaClient({});
-const sqsClient = new SQSClient({});
+const athenaClient = AWSXRay.captureAWSv3Client(new AthenaClient({}));
+const sqsClient = AWSXRay.captureAWSv3Client(new SQSClient({}));
 
 // Configuration from environment
 const DATABASE = process.env.ATHENA_DATABASE!;
