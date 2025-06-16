@@ -1,5 +1,6 @@
 // src/sendToExternalBatch.ts
 import { SQSEvent, Context } from "aws-lambda";
+import * as AWSXRay from "aws-xray-sdk-core";
 
 const MAX_RETRIES = 3;
 
@@ -10,7 +11,14 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
   let attempt = 0;
 
   while (attempt < MAX_RETRIES) {
+    // Create a subsegment for the external HTTP call
+    const segment = AWSXRay.getSegment();
+    const subsegment = segment?.addNewSubsegment('external-api-call');
+    
     try {
+      subsegment?.addAnnotation('endpoint', endpointUrl);
+      subsegment?.addAnnotation('batchSize', messages.length);
+      
       const response = await fetch(endpointUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -24,10 +32,16 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
 
       // Log and exit on success
       console.log("Batch POST succeeded:", await response.text());
+      subsegment?.close();
       return;
     } catch (error: any) {
       attempt++;
       console.error(`Attempt ${attempt} failed:`, error);
+      
+      if (subsegment) {
+        subsegment.addError(error);
+        subsegment.close();
+      }
 
       if (attempt < MAX_RETRIES) {
         // Exponential backoff

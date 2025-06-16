@@ -3,8 +3,9 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
+import * as AWSXRay from "aws-xray-sdk-core";
 
-const s3Client = new S3Client({});
+const s3Client = AWSXRay.captureAWSv3Client(new S3Client({}));
 
 export const handler = async (
   event: APIGatewayProxyEvent

@@ -15,6 +15,7 @@
     "@aws-sdk/client-glue": "^3.787.0",
     "@aws-sdk/client-s3": "^3.744.0",
     "@aws-sdk/client-sqs": "^3.744.0",
+    "aws-xray-sdk-core": "^3.10.3",
     "uuid": "^11.0.5"
   },
   "devDependencies": {
