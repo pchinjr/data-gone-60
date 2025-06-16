@@ -3,6 +3,9 @@ import { AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand, Get
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import * as AWSXRay from "aws-xray-sdk-core";
 
+// Enable debug logging for X-Ray
+AWSXRay.setContextMissingStrategy("LOG_ERROR");
+
 // AWS SDK clients
 const athenaClient = AWSXRay.captureAWSv3Client(new AthenaClient({}));
 const sqsClient = AWSXRay.captureAWSv3Client(new SQSClient({}));
@@ -19,7 +22,13 @@ const QUERY_MONTH = process.env.QUERY_MONTH!;
 const QUERY_DAY = process.env.QUERY_DAY!;
 
 export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxyResult> => {
+  console.log("X-Ray trace ID:", process.env._X_AMZN_TRACE_ID || "Not available");
+  
   try {
+    // Create a custom subsegment for query preparation
+    const segment = AWSXRay.getSegment();
+    const queryPrepSubsegment = segment?.addNewSubsegment('prepare-athena-query');
+    
     // Construct Athena SQL: partition by date only
     const queryString = `
       SELECT
@@ -34,6 +43,13 @@ export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxy
         AND day = '${QUERY_DAY}'
     `;
     console.log("Running Athena query:", queryString);
+    
+    if (queryPrepSubsegment) {
+      queryPrepSubsegment.addAnnotation('year', QUERY_YEAR);
+      queryPrepSubsegment.addAnnotation('month', QUERY_MONTH);
+      queryPrepSubsegment.addAnnotation('day', QUERY_DAY);
+      queryPrepSubsegment.close();
+    }
 
     // Start query execution
     const startResp = await athenaClient.send(new StartQueryExecutionCommand({
@@ -45,6 +61,9 @@ export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxy
 
     const queryExecutionId = startResp.QueryExecutionId!;
 
+    // Create a subsegment for query polling
+    const pollSubsegment = segment?.addNewSubsegment('poll-athena-query');
+    
     // Poll until the query completes
     let status = "RUNNING";
     while (status === "RUNNING" || status === "QUEUED") {
@@ -53,17 +72,37 @@ export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxy
       }));
       status = execResp.QueryExecution?.Status?.State!;
       if (status === "FAILED" || status === "CANCELLED") {
+        if (pollSubsegment) {
+          pollSubsegment.addError(new Error(`Athena query failed: ${execResp.QueryExecution?.Status?.StateChangeReason}`));
+          pollSubsegment.close();
+        }
         throw new Error(`Athena query failed: ${execResp.QueryExecution?.Status?.StateChangeReason}`);
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
+    
+    if (pollSubsegment) {
+      pollSubsegment.addAnnotation('queryStatus', status);
+      pollSubsegment.close();
+    }
 
+    // Create a subsegment for processing results
+    const resultsSubsegment = segment?.addNewSubsegment('process-athena-results');
+    
     // Retrieve results
     const resultsResp = await athenaClient.send(new GetQueryResultsCommand({ QueryExecutionId: queryExecutionId }));
     const rows = resultsResp.ResultSet?.Rows || [];
     const dataRows = rows.slice(1); // skip header
     console.log(`Athena returned ${dataRows.length} rows`);
+    
+    if (resultsSubsegment) {
+      resultsSubsegment.addAnnotation('rowCount', dataRows.length);
+      resultsSubsegment.close();
+    }
 
+    // Create a subsegment for SQS operations
+    const sqsSubsegment = segment?.addNewSubsegment('send-to-sqs');
+    
     // Send each record to SQS
     for (const row of dataRows) {
       const cols = row.Data!;
@@ -78,6 +117,11 @@ export const handler: APIGatewayProxyHandler = async (): Promise<APIGatewayProxy
         QueueUrl: SQS_QUEUE_URL,
         MessageBody: JSON.stringify(record)
       }));
+    }
+    
+    if (sqsSubsegment) {
+      sqsSubsegment.addAnnotation('messagesSent', dataRows.length);
+      sqsSubsegment.close();
     }
 
     return {

@@ -2,6 +2,9 @@
 import { SQSEvent, Context } from "aws-lambda";
 import * as AWSXRay from "aws-xray-sdk-core";
 
+// Enable debug logging for X-Ray
+AWSXRay.setContextMissingStrategy("LOG_ERROR");
+
 const MAX_RETRIES = 3;
 
 /**
@@ -16,8 +19,11 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
     const subsegment = segment?.addNewSubsegment('external-api-call');
     
     try {
-      subsegment?.addAnnotation('endpoint', endpointUrl);
-      subsegment?.addAnnotation('batchSize', messages.length);
+      if (subsegment) {
+        subsegment.addAnnotation('endpoint', endpointUrl);
+        subsegment.addAnnotation('batchSize', messages.length);
+        subsegment.addAnnotation('attempt', attempt + 1);
+      }
       
       const response = await fetch(endpointUrl, {
         method: "POST",
@@ -32,7 +38,10 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
 
       // Log and exit on success
       console.log("Batch POST succeeded:", await response.text());
-      subsegment?.close();
+      if (subsegment) {
+        subsegment.addAnnotation('status', 'success');
+        subsegment.close();
+      }
       return;
     } catch (error: any) {
       attempt++;
@@ -40,6 +49,7 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
       
       if (subsegment) {
         subsegment.addError(error);
+        subsegment.addAnnotation('status', 'failed');
         subsegment.close();
       }
 
@@ -61,28 +71,48 @@ async function postBatch(endpointUrl: string, messages: unknown[]): Promise<void
  * to an external HTTP endpoint.
  */
 export const handler = async (event: SQSEvent, context: Context): Promise<void> => {
+  console.log("X-Ray trace ID:", process.env._X_AMZN_TRACE_ID || "Not available");
+  
   const endpointUrl = process.env.EXTERNAL_ENDPOINT_URL!;
 
-  // Parse and filter valid JSON messages
-  const messages = event.Records
-    .map((record) => {
-      try {
-        return JSON.parse(record.body);
-      } catch (err) {
-        console.error("Invalid JSON in record, skipping:", record.body, err);
-        return null;
-      }
-    })
-    .filter((msg): msg is unknown => msg !== null);
+  // Create a subsegment for processing the batch
+  const segment = AWSXRay.getSegment();
+  const processSubsegment = segment?.addNewSubsegment('process-batch');
+  
+  try {
+    // Parse and filter valid JSON messages
+    const messages = event.Records
+      .map((record) => {
+        try {
+          return JSON.parse(record.body);
+        } catch (err) {
+          console.error("Invalid JSON in record, skipping:", record.body, err);
+          return null;
+        }
+      })
+      .filter((msg): msg is unknown => msg !== null);
 
-  if (messages.length === 0) {
-    console.log("No valid messages to send.");
-    return;
+    if (processSubsegment) {
+      processSubsegment.addAnnotation('totalRecords', event.Records.length);
+      processSubsegment.addAnnotation('validRecords', messages.length);
+      processSubsegment.close();
+    }
+
+    if (messages.length === 0) {
+      console.log("No valid messages to send.");
+      return;
+    }
+
+    console.log(`Dispatching batch of ${messages.length} messages to ${endpointUrl}`);
+
+    // Send with retries
+    await postBatch(endpointUrl, messages);
+    console.log("All messages dispatched successfully.");
+  } catch (error) {
+    if (processSubsegment && !processSubsegment.isClosed()) {
+      processSubsegment.addError(error);
+      processSubsegment.close();
+    }
+    throw error;
   }
-
-  console.log(`Dispatching batch of ${messages.length} messages to ${endpointUrl}`);
-
-  // Send with retries
-  await postBatch(endpointUrl, messages);
-  console.log("All messages dispatched successfully.");
 };
