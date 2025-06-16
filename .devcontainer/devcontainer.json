@@ -7,5 +7,6 @@
 		"ghcr.io/customink/codespaces-features/sam-cli:1": {
 			"version": "latest"
 		}
-	}
+	},
+	"postCreateCommand": "npm install -g esbuild"
 }
