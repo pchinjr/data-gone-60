@@ -10,7 +10,7 @@ This pipeline consists of three main stages:
    - **Lambda:** `ingestData.ts`  
    - **What it does:**  
      - Accepts a POST with an array of sensor records.  
-     - Extracts the **date** (YYYY-MM-DD) from the first record’s `timestamp`.  
+     - Extracts the **date** (YYYY-MM-DD) from the first record's `timestamp`.  
      - Writes a single newline-delimited JSON file under  
        `s3://<bucket>/raw/year={YYYY}/month={MM}/day={DD}/{uuid}.json`.  
      - **Partitions by date only** (year, month, day) for much faster Athena scans and no hour/minute bloat.
@@ -32,7 +32,11 @@ This pipeline consists of three main stages:
      - Triggered by SQS in batches (configurable size/window).  
      - Posts the batch of JSON messages in one HTTP `POST` to your Val Town endpoint  
        (set via `EXTERNAL_ENDPOINT_URL` in the SAM template).  
-     - The external service (e.g. SQLite on Val Town) ingests these records into its own table.
+     - The external service (SQLite on Val Town) ingests these records into its own table.
+   - **Val Town Integration:** `valTownWebhook.ts`
+     - Provides a serverless SQLite database endpoint that receives and stores the processed sensor data.
+     - Creates a dynamic table based on the webhook filename.
+     - Handles data validation and provides detailed response with insertion statistics.
 
 
 ## Prerequisites
@@ -107,6 +111,117 @@ This pipeline consists of three main stages:
   - Updated the external endpoint URL to `https://pchinjr-externaldatawarehouse.web.val.run`.
   - Adjusted the IAM policies to restrict SQS send permissions to the correct queue ARN.
 
+## AWS X-Ray Integration
+
+This project implements AWS X-Ray to provide distributed tracing and performance monitoring across the entire ETL pipeline. X-Ray helps visualize the application's components, identify performance bottlenecks, and troubleshoot request failures.
+
+### X-Ray Implementation Details
+
+1. **SAM Template Configuration**
+   - Each Lambda function has X-Ray tracing enabled via the `Tracing: Active` property
+   - IAM permissions for X-Ray actions (`xray:PutTraceSegments` and `xray:PutTelemetryRecords`) are included in the Lambda execution roles
+
+2. **Lambda Function Instrumentation**
+   - AWS SDK clients are automatically instrumented when X-Ray tracing is enabled
+   - Custom subsegments are created for critical operations:
+     - S3 write operations in the ingestion function
+     - Athena query execution and polling
+     - SQS message processing
+     - HTTP requests to the external endpoint
+
+3. **Trace Analysis**
+   - The X-Ray service map provides a visual representation of the entire pipeline
+   - Trace details show the execution time for each component
+   - Annotations and metadata are added to segments to provide context for debugging
+
+4. **Monitoring and Troubleshooting**
+   - X-Ray traces can be viewed in the AWS X-Ray console
+   - CloudWatch integrates with X-Ray to provide metrics and alarms based on trace data
+   - Trace data helps identify bottlenecks, such as slow Athena queries or external API calls
+
+### Enabling X-Ray Locally
+
+For local development and testing with X-Ray:
+
+```bash
+# Install the X-Ray daemon
+wget https://s3.us-east-2.amazonaws.com/aws-xray-assets.us-east-2/xray-daemon/aws-xray-daemon-linux-3.x.zip
+unzip aws-xray-daemon-linux-3.x.zip
+sudo mv xray /usr/local/bin/
+
+# Run the X-Ray daemon locally
+xray -o -n us-east-1
+```
+
+When running functions locally with SAM, enable X-Ray with:
+
+```bash
+sam local invoke -t template.yaml --parameter-overrides ParameterKey=EnableXRay,ParameterValue=true
+```
+
+### Viewing X-Ray Traces
+
+After deploying the application:
+
+1. Navigate to the AWS X-Ray console
+2. Select "Service map" to view the end-to-end flow of requests
+3. Click on any node to see detailed trace information
+4. Use the "Traces" view to filter and analyze specific requests
+5. Look for error traces or traces with high latency to identify issues
+
+## Val Town Integration
+
+This project uses [Val Town](https://val.town) as a serverless endpoint to simulate a data warehouse. Val Town is a cloud environment for running JavaScript/TypeScript functions as APIs, webhooks, and scheduled jobs.
+
+### Val Town Webhook Implementation
+
+The `valTownWebhook.ts` file contains the code that runs on Val Town and serves as the external endpoint for our ETL pipeline:
+
+1. **Dynamic Table Creation**
+   - The webhook automatically creates an SQLite table named after the file (e.g., `externalDataWarehouse_sensor_data`)
+   - Table schema includes fields for sensor data plus a timestamp for when records were received
+
+2. **Data Processing**
+   - Accepts batched JSON payloads from the Lambda function
+   - Validates each record before insertion
+   - Handles both camelCase and lowercase field names for flexibility
+   - Provides detailed response with success status and insertion counts
+
+3. **Error Handling**
+   - Validates request method (only accepts POST)
+   - Validates payload structure (expects an array)
+   - Logs errors for malformed entries
+   - Returns appropriate HTTP status codes and error messages
+
+### Setting Up Val Town Integration
+
+1. **Create a Val Town Account**
+   - Sign up at [val.town](https://val.town)
+   - Create a new "val" (function) with the code from `valTownWebhook.ts`
+   - Name it `externalDataWarehouse` to match the expected table name
+
+2. **Deploy the Webhook**
+   - Val Town automatically deploys your function as a web endpoint
+   - Copy the webhook URL (e.g., `https://username-externaldatawarehouse.web.val.run`)
+   - Configure this URL in your SAM template as the `EXTERNAL_ENDPOINT_URL` environment variable
+
+3. **Testing the Integration**
+   - After deploying both the AWS pipeline and Val Town webhook, you can test the end-to-end flow
+   - Use the SQLite interface in Val Town to query your data:
+     ```sql
+     SELECT * FROM externalDataWarehouse_sensor_data;
+     ```
+   - Monitor incoming requests in the Val Town logs
+
+4. **Benefits of Val Town**
+   - Serverless: No infrastructure to manage
+   - Built-in SQLite database: Persistent storage without additional setup
+   - Web interface: Easy to monitor and query data
+   - Logs: Detailed request and error logging
+   - Cost-effective: Free tier available for development and testing
+
+The Val Town integration provides a lightweight, serverless solution for the final destination of our ETL pipeline, simulating a data warehouse without the need for complex infrastructure setup.
+
 ## Deployment Instructions
 
 1. **Fork & Clone**  
@@ -119,13 +234,13 @@ This pipeline consists of three main stages:
    Enter your AWS Access Key, Secret, default region, etc.
 
 3. **Set Up Val Town Data Warehouse**  
-   - In Val Town, create an “externalDataWarehouse” endpoint.  
+   - In Val Town, create an "externalDataWarehouse" endpoint.  
    - Copy its full URL (e.g. `https://pchinjr-externaldatawarehouse.web.val.run`).
    - https://docs.val.town/vals/http/
 
 4. **Bake the Val Town URL into the Lambda**  
    - Open your `template.yaml` (SAM template).  
-   - Under the **SendToExternalBatchFunction** resource’s `Environment.Variables`, set:  
+   - Under the **SendToExternalBatchFunction** resource's `Environment.Variables`, set:  
      ```yaml
      EXTERNAL_ENDPOINT_URL: "https://pchinjr-externaldatawarehouse.web.val.run"
      ```  
@@ -220,9 +335,10 @@ This pipeline consists of three main stages:
       SELECT * FROM <that_table>;
       ```
     - https://docs.val.town/std/sqlite/
+
 ## Conclusion
 
-This project demonstrates how to build a serverless ETL pipeline using AWS SAM that ingests sensor data, transforms it using Athena, and delivers processed records in batched requests to an external endpoint. We’ve iterated through a debugging process to resolve issues with IAM permissions, metadata propagation, and batching logic. 
+This project demonstrates how to build a serverless ETL pipeline using AWS SAM that ingests sensor data, transforms it using Athena, and delivers processed records in batched requests to an external endpoint. We've iterated through a debugging process to resolve issues with IAM permissions, metadata propagation, and batching logic. The integration with AWS X-Ray provides valuable insights into the performance and behavior of the pipeline, making it easier to monitor and troubleshoot in production environments.
   
 ---
 # Debug Process
